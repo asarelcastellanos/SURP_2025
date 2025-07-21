@@ -1,0 +1,98 @@
+---
+title: "Mapping San Luis Obispo’s Economic Specializations"
+subtitle: "LQ Analysis with QCEW Data"
+author: "Asarel Castellanos"
+format: pdf
+editor: visual
+---
+
+```{r, echo=FALSE, message=FALSE}
+required_pkgs <- c("readr", "readxl", "dplyr", "tidyr", "stringr", "janitor")
+installed_pkgs <- rownames(installed.packages())
+
+for (pkg in required_pkgs) {
+  if (!pkg %in% installed_pkgs) install.packages(pkg)
+}
+```
+
+```{r, echo=FALSE, message=FALSE}
+library(readr)
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(janitor)
+library(htmltab)
+```
+
+```{r, echo=FALSE, message=FALSE}
+# Example Query (SLO County - Annual Data)
+#"http://www.bls.gov/cew/data/api/2024/a/area/06079.csv"
+#http://www.bls.gov/cew/data/api/2024/a/area/US000.csv"
+
+qcew_area <- function(year, qtr, fips) {
+  url <- str_glue(
+    "https://data.bls.gov/cew/data/api/{year}/{qtr}/area/{fips}.csv"
+  )
+  message("Downloading: ", url)
+  read_csv(url, col_types = cols(.default = "c")) %>%
+    clean_names()
+}
+```
+
+This project explores the industrial compostion of San Luis Obispo (SLO) county by using Location Quotients (LQs) to identify industries that are more concentrated locally compared to the national economy. This purpose is to determine which sub-sectors and industries play a disproportionately significant role in SLO County's economy.
+
+```{r, echo=FALSE, message=FALSE}
+download <- FALSE
+
+year <- "2024"            # Current Available Year
+qtr <- "a"                # "a" = annual
+fips_county <- "06079"    # SLO County
+fips_national <- "US000"  # U.S. total
+detail <- "4"             # agglvl_code: "2"=2-digit, "3"=3-digit, "4"=4-digit, "0"=6-digit
+```
+
+## 1. Loading and Preparing the Data
+
+To begin this process, we loaded three data sets:
+
+These three data sets come from the Bureau of Labor Statistics: [NAICS Codes](https://www.census.gov/naics/?58967?yearbck=2022) [SLO Employment Data](https://data.bls.gov/cew/apps/table_maker/v4/table_maker.htm#type=7&year=2024&qtr=a&own=5&area=06079&supp=0) [US Employment Data](https://data.bls.gov/cew/apps/table_maker/v4/table_maker.htm#type=7&year=2024&qtr=a&own=5&area=US000&supp=0)
+
+-   `naics_2022.xlsx`: provides NAICS industry codes and their titles
+
+-   `slo_2024.csv`: contains monthly employment levels by industry in SLO County
+
+-   `us_2024.csv`: contains comparable national data
+
+```{r, echo=FALSE, message=FALSE}
+if (download) {
+  slo_county <- qcew_area(year, qtr, fips_county)
+  national <- qcew_area(year, qtr, fips_national)
+} else {
+  slo_county <- read_csv("data/slo_2024.csv")
+  national <- read_csv("data/us_2024.csv")
+}
+
+naics <- read_xlsx("data/naics_2022.xlsx") %>%
+  select(2:3) %>%
+  rename(codes = 1, title = 2) %>%
+  drop_na()
+```
+
+## 3. Calculating Location Quotients (LQs)
+
+We merged the SLO and US employment summaries by industry code and then computed the location quotient:
+
+$$
+LQ_i = \left( \frac{e^{\text{SLO}}_i}{e^{\text{SLO}}} \right) \Big/ \left( \frac{e^{\text{US}}_i}{e^{\text{US}}} \right)
+$$
+
+Where:
+
+-   $e^{\text{SLO}}_i$: Employment in industry *i* in **SLO**
+
+-   $e^{\text{SLO}}$: Total employment in **SLO**
+
+-   $e^{\text{US}}_i$: Employment in industry *i* in **US**
+
+-   $e^{\text{US}}$: Total employment in **US**
