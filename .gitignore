@@ -1,0 +1,8 @@
+# R Studio
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# Mac OS
+*.DS_Store
