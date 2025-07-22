@@ -1,13 +1,13 @@
 ---
 title: "Mapping San Luis Obispo’s Economic Specializations"
 subtitle: "LQ Analysis with QCEW Data"
-author: "Asarel Castellanos"
+authors: "Asarel Castellanos and Joseph Sanchez"
 format: pdf
 editor: visual
 ---
 
-```{r, echo=FALSE, message=FALSE}
-required_pkgs <- c("readr", "readxl", "dplyr", "tidyr", "stringr", "janitor")
+```{r, eval=FALSE, echo=FALSE, message=FALSE}
+required_pkgs <- c("readr", "readxl", "dplyr", "tidyr", "stringr", "janitor", "kniter", "ggplot2", "forcats")
 installed_pkgs <- rownames(installed.packages())
 
 for (pkg in required_pkgs) {
@@ -22,7 +22,9 @@ library(dplyr)
 library(tidyr)
 library(stringr)
 library(janitor)
-library(htmltab)
+library(knitr)
+library(ggplot2)
+library(forcats)
 ```
 
 ```{r, echo=FALSE, message=FALSE}
@@ -40,37 +42,41 @@ qcew_area <- function(year, qtr, fips) {
 }
 ```
 
-This project explores the industrial compostion of San Luis Obispo (SLO) county by using Location Quotients (LQs) to identify industries that are more concentrated locally compared to the national economy. This purpose is to determine which sub-sectors and industries play a disproportionately significant role in SLO County's economy.
-
 ```{r, echo=FALSE, message=FALSE}
 download <- FALSE
-
-year <- "2024"            # Current Available Year
-qtr <- "a"                # "a" = annual
-fips_county <- "06079"    # SLO County
-fips_national <- "US000"  # U.S. total
-detail <- "4"             # agglvl_code: "2"=2-digit, "3"=3-digit, "4"=4-digit, "0"=6-digit
+year <- "2024"                # Current Available Year
+qtr <- "a"                    # "a" = annual
+fips_slo <- "06079"           # SLO County
+fips_ca <- "06000"            # California
+fips_us <- "US000"            # U.S. Total
+detail <- "4"                 # agglvl_code: "2"=2-digit, "3"=3-digit, "4"=4-digit, "0"=6-digit
 ```
+
+\newpage
+
+This project explores the industrial compostion of San Luis Obispo (SLO) county by using Location Quotients (LQs) to identify industries that are more concentrated locally compared to the national economy. This purpose is to determine which sub-sectors and industries play a disproportionately significant role in SLO County's economy.
 
 ## 1. Loading and Preparing the Data
 
-To begin this process, we loaded three data sets:
-
-These three data sets come from the Bureau of Labor Statistics: [NAICS Codes](https://www.census.gov/naics/?58967?yearbck=2022) [SLO Employment Data](https://data.bls.gov/cew/apps/table_maker/v4/table_maker.htm#type=7&year=2024&qtr=a&own=5&area=06079&supp=0) [US Employment Data](https://data.bls.gov/cew/apps/table_maker/v4/table_maker.htm#type=7&year=2024&qtr=a&own=5&area=US000&supp=0)
+To begin this process, we loaded four data sets; they come from the Bureau of Labor Statistics and the U.S Census: [NAICS Codes](https://www.census.gov/naics/?58967?yearbck=2022) [SLO Employment Data](https://data.bls.gov/cew/apps/table_maker/v4/table_maker.htm#type=7&year=2024&qtr=a&own=5&area=06079&supp=0) [CA Employment Data](https://data.bls.gov/cew/apps/table_maker/v4/table_maker.htm#type=7&year=2024&qtr=A&own=5&area=06000&supp=0) [US Employment Data](https://data.bls.gov/cew/apps/table_maker/v4/table_maker.htm#type=7&year=2024&qtr=a&own=5&area=US000&supp=0)
 
 -   `naics_2022.xlsx`: provides NAICS industry codes and their titles
 
 -   `slo_2024.csv`: contains monthly employment levels by industry in SLO County
 
+-   `ca_2024.csv`: contains comparable state data
+
 -   `us_2024.csv`: contains comparable national data
 
 ```{r, echo=FALSE, message=FALSE}
 if (download) {
-  slo_county <- qcew_area(year, qtr, fips_county)
-  national <- qcew_area(year, qtr, fips_national)
+  slo <- qcew_area(year, qtr, fips_slo)
+  ca <- qcew_area(year, qtr, fips_ca)
+  us <- qcew_area(year, qtr, fips_us)
 } else {
-  slo_county <- read_csv("data/slo_2024.csv")
-  national <- read_csv("data/us_2024.csv")
+  slo <- read_csv("data/slo_2024.csv")
+  ca <- read_csv("data/ca_2024.csv")
+  us <- read_csv("data/us_2024.csv")
 }
 
 naics <- read_xlsx("data/naics_2022.xlsx") %>%
@@ -79,9 +85,9 @@ naics <- read_xlsx("data/naics_2022.xlsx") %>%
   drop_na()
 ```
 
-## 3. Calculating Location Quotients (LQs)
+## 2. Calculating Location Quotients (LQs)
 
-We merged the SLO and US employment summaries by industry code and then computed the location quotient:
+We merged the SLO and US employment summaries by **industry code** and then computed the location quotient:
 
 $$
 LQ_i = \left( \frac{e^{\text{SLO}}_i}{e^{\text{SLO}}} \right) \Big/ \left( \frac{e^{\text{US}}_i}{e^{\text{US}}} \right)
@@ -96,3 +102,172 @@ Where:
 -   $e^{\text{US}}_i$: Employment in industry *i* in **US**
 
 -   $e^{\text{US}}$: Total employment in **US**
+
+```{r, echo=FALSE, message=FALSE}
+slo_sum <- slo %>%
+  group_by(industry_code) %>%
+  summarise(emp_slo = sum(annual_avg_emplvl, na.rm = TRUE))
+
+us_sum <- us %>%
+  group_by(industry_code) %>%
+  summarise(emp_us = sum(annual_avg_emplvl, na.rm = TRUE))
+
+lq_data <- slo_sum %>%
+  inner_join(us_sum, by = "industry_code") %>%
+  mutate(share_slo = emp_slo / sum(emp_slo),
+         share_us = emp_us / sum(emp_us),
+         LQ = share_slo / share_us)
+```
+
+The LQ tells us whether a given industry is **overrepresented (LQ \> 1)** or **underrepresented (LQ \< 1)** in SLO compared to the national average.
+
+## 3. Identifying Top NAICS Sub-Sectors by LQ
+
+We focused on **3-digit NAICS codes**, which represent broad sub-sectors within the economy (e.g. Food Services, Construction). Filtering and sorting by highest LQs helped us identify the **top 5% most concentrated sub-sectors** in SLO County.
+
+> **Note on methodology:** Most LQ studies compute LQs on employment shares and flag “specialized” industries by taking the upper 5% of the LQ distribution (i.e. those with LQ ≥ the 95th percentile). We follow this convention here.
+
+```{r, echo=FALSE, message=FALSE}
+lq_threshold3 <- lq_data %>%
+  filter(nchar(industry_code) == 3) %>%
+  pull(LQ) %>%
+  quantile(., 0.95, na.rm = TRUE)
+
+top_sub_sectors <- lq_data %>%
+  filter(
+    nchar(industry_code) == 3,
+    LQ >= lq_threshold3
+  ) %>%
+  arrange(desc(LQ)) %>%
+  slice_max(LQ, n = 10) %>%
+  left_join(naics, by = c("industry_code" = "codes")) %>%
+  select(title, industry_code, emp_slo, LQ) %>%
+  rename(
+    `Industry Code` = industry_code,
+    `Title` = title,
+    `Workforce` = emp_slo
+    ) %>%
+  mutate(LQ = round(LQ, 2),
+         Workforce = format(round(Workforce, -1), big.mark = ","),)
+```
+
+```{r, echo=FALSE}
+kable(top_sub_sectors,
+  caption = "Sub-Sectors in the Top 5% of LQ",
+  align = c("l","l","l","l"))
+```
+
+## 4. Flegg’s Location Quotient (FLQ) Adjustment
+
+To account for SLO County's relative size within California and temper extreme LQ values in small sectors, we apply Flegg’s Location Quotient (FLQ):
+
+$$
+\mathrm{FLQ}_{i}
+= 
+\underbrace{\Bigl(\frac{e^{\mathrm{SLO}}_{i}}{e^{\mathrm{SLO}}}\Bigr)\Big/\Bigl(\frac{e^{\mathrm{US}}_{i}}{e^{\mathrm{US}}}\Bigr)}_{\displaystyle \mathrm{LQ}_{i}}
+\;\times\;
+\Bigl[\log_{2}\!\bigl(1 + \tfrac{E_{\mathrm{SLO}}}{E_{\mathrm{CA}}}\bigr)\Bigr]^{\lambda}
+$$
+
+Where:
+
+-   $e^{\text{SLO}}_i$: Employment in industry *i* in **SLO**
+
+-   $e^{\text{SLO}}$: Total employment in **SLO**
+
+-   $e^{\text{CA}}$: Total employment in **CA**
+
+-   $e^{\text{US}}_i$: Employment in industry *i* in **US**
+
+-   $e^{\text{US}}$: Total employment in **US**
+
+-   ${\lambda}$: Flegg’s tuning parameter
+
+These industries remain the county’s strongest areas of specialization even after adjusting for regional scale. Like the classic LQs, the FLQ results highlight the same sub-sectors as the most concentrated.
+
+```{r, echo=FALSE, message=FALSE}
+ca_sum <- ca %>%
+  group_by(industry_code) %>%
+  summarise(emp_ca = sum(annual_avg_emplvl, na.rm = TRUE))
+
+flq_data <- slo_sum %>%
+  inner_join(ca_sum, by = "industry_code") %>%
+  inner_join(us_sum, by = "industry_code") %>%
+  mutate(
+    share_slo    = emp_slo / sum(emp_slo),
+    share_us     = emp_us  / sum(emp_us),
+    LQ           = share_slo / share_us,
+    region_share = sum(emp_slo) / sum(emp_ca),
+    lambda       = 0.2,
+    FLQ          = LQ * (log2(1 + region_share))^lambda
+  )
+
+flq_threshold3 <- flq_data %>%
+  filter(nchar(industry_code) == 3) %>%
+  pull(FLQ) %>%
+  quantile(., 0.95, na.rm = TRUE)
+
+top_sub_sectors_flq <- flq_data %>%
+  filter(
+    nchar(industry_code) == 3,
+    FLQ >= flq_threshold3
+  ) %>%
+  arrange(desc(FLQ)) %>%
+  slice_max(LQ, n = 10) %>%
+  left_join(naics, by = c("industry_code" = "codes")) %>%
+  select(title, industry_code, emp_slo, LQ, FLQ) %>%
+  rename(
+    `Industry Code` = industry_code,
+    `Title` = title,
+    `Workforce` = emp_slo
+    ) %>%
+  mutate(LQ = round(LQ, 2),
+         FLQ = round(FLQ, 2),
+         Workforce = format(round(Workforce, -1), big.mark = ","),)
+```
+
+```{r, echo=FALSE}
+kable(top_sub_sectors_flq, caption = "Sub-Sectors in the Top 5% of FLQ",, align = c("l","l","l","l","l"))
+```
+
+## 5. Drilling Down: Top 4-Digit Industries by LQ
+
+Now we’re zooming in to the 4-digit NAICS level so we can pick out the really specific sub-industries. Using FLQ here also helps us dodge any wild, misleading LQ spikes.
+
+```{r, echo=FALSE, message=FALSE}
+flq_threshold4 <- flq_data %>%
+  filter(nchar(industry_code) == 4) %>%
+  pull(FLQ) %>%
+  quantile(., 0.95, na.rm = TRUE)
+
+top_4digit_industries_flq <- flq_data %>%
+  filter(
+    nchar(industry_code) == 4,
+    substr(industry_code, 1, 3) %in% top_sub_sectors$`Industry Code`,
+    FLQ >= flq_threshold4
+  ) %>%
+  arrange(desc(FLQ)) %>%
+  slice_max(LQ, n = 10) %>%
+  left_join(naics, by = c("industry_code" = "codes")) %>%
+  select(title, industry_code, emp_slo, LQ, FLQ) %>%
+  rename(
+    `Industry Code` = industry_code,
+    `Title` = title,
+    `Workforce` = emp_slo
+    ) %>%
+  mutate(LQ = round(LQ, 2),
+         FLQ = round(FLQ, 2),
+         Workforce = format(round(Workforce, -1), big.mark = ","),)
+```
+
+```{r, echo=FALSE}
+kable(top_4digit_industries_flq, caption = "4-digit NAICS Industires in the Top 5% of FLQ", align = c("l","l","l","l","l"))
+```
+
+For our study, we decided to use **4-digit NAICS** codes because it feels like the best middle ground:
+
+-   **More specific than broad categories**: 4-digit splits big sectors (like "Food Manufacturing") into clearer groups (e.g. "Beverage and Tobacco Manufacturing").
+
+-   **Reliable data**: Even in a small place like SLO County, 4-digit industries usually have enough jobs recorded in the QCEW, so we don’t hit privacy suppressions as much as with 5- or 6-digit codes.
+
+A lot of other county-level IO and LQ work do the same. For example, [Flegg & Webber (2000)](https://www.tandfonline.com/doi/abs/10.1080/00343400050085675) and [Mardones & Silva (2023)](https://econpapers.repec.org/article/kapcompec/v_3a61_3ay_3a2023_3ai_3a3_3ad_3a10.1007_5fs10614-022-10241-x.htm?utm_source) build their regional IO tables at the 4-digit level, showing it’s a common and practical choice.
